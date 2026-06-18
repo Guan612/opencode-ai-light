@@ -1,5 +1,5 @@
 {
-  "name": "@yuxin/opencode-ai-light",
+  "name": "@guan612/opencode-ai-light",
   "version": "0.1.0",
   "description": "OpenCode plugin that forwards session events to AI Light (desktop traffic light widget)",
   "main": "src/index.js",

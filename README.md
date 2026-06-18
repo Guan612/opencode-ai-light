@@ -11,7 +11,7 @@ Add the plugin to your `opencode.json`:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@yuxin/opencode-ai-light"]
+  "plugin": ["@guan612/opencode-ai-light"]
 }
 ```
 
@@ -29,14 +29,17 @@ Logs are written to `~/.ai_light/opencode-plugin.log`.
 ## Event Mapping
 
 | OpenCode Event | AI Light Event | Status |
-|---|---|---|---|
+|---|---|---|
 | `session.created` | `session-start` | Idle (green) |
-| `session.updated` | `prompt-submit` | Working (yellow) |
+| `session.status` (busy/retry) | `prompt-submit` | Working (yellow) |
 | `session.status` (idle) | `stop` | Done (green) |
 | `session.idle` | `stop` | Done (green) |
 | `session.error` | `notification` | Error (red) |
 | `permission.asked` | `permission-request` | Error (red) |
 | `session.deleted` | `session-end` | Removed |
+
+`session.updated` is intentionally ignored because OpenCode also emits it for background session saves after completion. Treating it as work would turn the light yellow again after a task is done.
+Completed assistant `message.updated` events are also ignored because they can occur while OpenCode is still busy, such as before a tool call or follow-up assistant output.
 
 ## AI Light Integration Note
 
