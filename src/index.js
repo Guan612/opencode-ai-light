@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, mkdirSync, appendFileSync } from "fs";
-import { homedir, platform } from "os";
+import { homedir } from "os";
 import { join } from "path";
 
 const AI_LIGHT_DIR = join(homedir(), ".ai_light");
@@ -30,19 +30,11 @@ function findAiLightUrl() {
   }
 }
 
-function sessionId(event) {
-  return event.sessionID || event.session_id || "unknown";
-}
-
-function cwd(event) {
-  return event.properties?.cwd || event.cwd || event.directory || "";
-}
-
 async function postEvent(url, eventType, sid, cwdPath) {
   try {
     const body = JSON.stringify({
       event_type: eventType,
-      session_id: sid,
+      session_id: sid || "unknown",
       cwd: cwdPath || undefined,
     });
     const res = await fetch(url, {
@@ -56,48 +48,55 @@ async function postEvent(url, eventType, sid, cwdPath) {
   }
 }
 
-let aiLightUrl = null;
-
 export const OpenCodeAiLightPlugin = async ({ directory }) => {
-  aiLightUrl = findAiLightUrl();
-  if (!aiLightUrl) {
+  const url = findAiLightUrl();
+  if (!url) {
     log("AI Light not detected — runtime.json not found and AI_LIGHT_URL not set");
     return {};
   }
-  log(`plugin initialized, target=${aiLightUrl} cwd=${directory}`);
+  log(`initialized target=${url} cwd=${directory}`);
 
-  const queued = {};
+  let lastStopTime = 0;
 
   return {
-    "session.created": async (event) => {
-      const sid = sessionId(event);
-      const cwdPath = cwd(event) || directory || "";
-      await postEvent(aiLightUrl, "session-start", sid, cwdPath);
-    },
+    event: async ({ event }) => {
+      const type = event?.type || "unknown";
+      const sid = event?.sessionID || event?.session_id || "unknown";
+      log(`received: type=${type} session=${sid}`);
 
-    "session.updated": async (event) => {
-      const sid = sessionId(event);
-      await postEvent(aiLightUrl, "prompt-submit", sid);
-    },
-
-    "session.idle": async (event) => {
-      const sid = sessionId(event);
-      await postEvent(aiLightUrl, "stop", sid);
-    },
-
-    "session.error": async (event) => {
-      const sid = sessionId(event);
-      await postEvent(aiLightUrl, "notification", sid);
-    },
-
-    "session.deleted": async (event) => {
-      const sid = sessionId(event);
-      await postEvent(aiLightUrl, "session-end", sid);
-    },
-
-    "permission.asked": async (event) => {
-      const sid = sessionId(event);
-      await postEvent(aiLightUrl, "permission-request", sid);
+      switch (type) {
+        case "session.created":
+          await postEvent(url, "session-start", sid, event?.properties?.cwd || directory || "");
+          break;
+        case "session.updated": {
+          const now = Date.now();
+          if (now - lastStopTime > 500) {
+            await postEvent(url, "prompt-submit", sid);
+          }
+          break;
+        }
+        case "session.status": {
+          const statusType = event?.properties?.status?.type;
+          if (statusType === "idle") {
+            lastStopTime = Date.now();
+            await postEvent(url, "stop", sid);
+          }
+          break;
+        }
+        case "session.idle":
+          lastStopTime = Date.now();
+          await postEvent(url, "stop", sid);
+          break;
+        case "session.error":
+          await postEvent(url, "notification", sid);
+          break;
+        case "session.deleted":
+          await postEvent(url, "session-end", sid);
+          break;
+        case "permission.asked":
+          await postEvent(url, "permission-request", sid);
+          break;
+      }
     },
   };
 };

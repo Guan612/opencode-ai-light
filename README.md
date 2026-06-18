@@ -29,9 +29,10 @@ Logs are written to `~/.ai_light/opencode-plugin.log`.
 ## Event Mapping
 
 | OpenCode Event | AI Light Event | Status |
-|---|---|---|
+|---|---|---|---|
 | `session.created` | `session-start` | Idle (green) |
 | `session.updated` | `prompt-submit` | Working (yellow) |
+| `session.status` (idle) | `stop` | Done (green) |
 | `session.idle` | `stop` | Done (green) |
 | `session.error` | `notification` | Error (red) |
 | `permission.asked` | `permission-request` | Error (red) |
