@@ -3,11 +3,20 @@
   "version": "0.1.0",
   "description": "OpenCode plugin that forwards session events to AI Light (desktop traffic light widget)",
   "main": "src/index.js",
+  "exports": "./src/index.js",
   "type": "module",
+  "files": ["src", "README.md", "opencode-ai-light.example.json"],
+  "scripts": {
+    "test": "node --test \"test/index.test.js\""
+  },
   "license": "AGPL-3.0-only",
   "keywords": ["opencode", "opencode-plugin", "ai-light", "traffic-light", "monitoring"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Guan612/opencode-ai-light"
-  }
+    "url": "git+https://github.com/Guan612/opencode-ai-light.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Guan612/opencode-ai-light/issues"
+  },
+  "homepage": "https://github.com/Guan612/opencode-ai-light#readme"
 }

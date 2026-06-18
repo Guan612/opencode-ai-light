@@ -17,6 +17,8 @@ Add the plugin to your `opencode.json`:
 
 OpenCode installs the package automatically at startup using Bun. Restart OpenCode and the plugin will connect to AI Light automatically.
 
+OpenCode loads plugins at startup. Quit and reopen OpenCode after changing this package or your `opencode.json` plugin list.
+
 ## Configuration
 
 No manual configuration needed. The plugin auto-discovers AI Light by reading:

@@ -5,8 +5,36 @@ import { join } from "path";
 const AI_LIGHT_DIR = join(homedir(), ".ai_light");
 const RUNTIME_PATH = join(AI_LIGHT_DIR, "runtime.json");
 const LOG_PATH = join(AI_LIGHT_DIR, "opencode-plugin.log");
-const PLUGIN_VERSION = "debug-2026-06-18-status-driven-v3";
+const PLUGIN_VERSION = "0.1.0";
 const WORKING_DELAY_MS = 100;
+
+const UNKNOWN_SESSION_ID = "unknown";
+
+const AI_LIGHT_EVENT = {
+  NOTIFICATION: "notification",
+  PERMISSION_REQUEST: "permission-request",
+  PROMPT_SUBMIT: "prompt-submit",
+  SESSION_END: "session-end",
+  SESSION_START: "session-start",
+  STOP: "stop",
+};
+
+const OPENCODE_EVENT = {
+  MESSAGE_UPDATED: "message.updated",
+  PERMISSION_ASKED: "permission.asked",
+  SESSION_CREATED: "session.created",
+  SESSION_DELETED: "session.deleted",
+  SESSION_ERROR: "session.error",
+  SESSION_IDLE: "session.idle",
+  SESSION_STATUS: "session.status",
+  SESSION_UPDATED: "session.updated",
+};
+
+const SESSION_STATUS = {
+  BUSY: "busy",
+  IDLE: "idle",
+  RETRY: "retry",
+};
 
 function log(msg) {
   try {
@@ -46,7 +74,7 @@ function getSessionId(event) {
     event?.properties?.info?.session?.id ||
     event?.properties?.info?.id ||
     event?.properties?.session?.id ||
-    "unknown"
+    UNKNOWN_SESSION_ID
   );
 }
 
@@ -60,7 +88,7 @@ async function postEvent(url, eventType, sid, cwdPath) {
   try {
     const body = JSON.stringify({
       event_type: eventType,
-      session_id: sid || "unknown",
+      session_id: sid || UNKNOWN_SESSION_ID,
       cwd: cwdPath || undefined,
     });
     const res = await fetch(url, {
@@ -81,24 +109,68 @@ export const OpenCodeAiLightPlugin = async ({ directory }) => {
     return {};
   }
   log(`initialized version=${PLUGIN_VERSION} target=${url} cwd=${directory}`);
-  await postEvent(url, "session-end", "unknown");
+  await postEvent(url, AI_LIGHT_EVENT.SESSION_END, UNKNOWN_SESSION_ID);
 
+  const sessions = createSessionController(url, directory || "");
+
+  return {
+    event: async ({ event }) => {
+      const type = event?.type || "unknown";
+      const sid = getSessionId(event);
+      log(`received: type=${type} session=${sid}`);
+
+      switch (type) {
+        case OPENCODE_EVENT.SESSION_CREATED:
+          await sessions.start(sid, event?.properties?.cwd);
+          break;
+        case OPENCODE_EVENT.SESSION_UPDATED:
+        case OPENCODE_EVENT.MESSAGE_UPDATED:
+          break;
+        case OPENCODE_EVENT.SESSION_STATUS: {
+          const statusType = getStatusType(event);
+          log(`status: session=${sid} value=${statusType || "unknown"}`);
+          if (statusType === SESSION_STATUS.BUSY || statusType === SESSION_STATUS.RETRY) {
+            await sessions.scheduleWorking(sid);
+          } else if (statusType === SESSION_STATUS.IDLE) {
+            await sessions.stop(sid);
+          }
+          break;
+        }
+        case OPENCODE_EVENT.SESSION_IDLE:
+          await sessions.stop(sid);
+          break;
+        case OPENCODE_EVENT.SESSION_ERROR:
+          await postEvent(url, AI_LIGHT_EVENT.NOTIFICATION, sid);
+          break;
+        case OPENCODE_EVENT.SESSION_DELETED:
+          sessions.forget(sid);
+          await postEvent(url, AI_LIGHT_EVENT.SESSION_END, sid);
+          break;
+        case OPENCODE_EVENT.PERMISSION_ASKED:
+          await postEvent(url, AI_LIGHT_EVENT.PERMISSION_REQUEST, sid);
+          break;
+      }
+    },
+  };
+};
+
+function createSessionController(url, defaultDirectory) {
   const knownSessions = new Set();
   const pendingWorkingTimers = new Map();
   const sessionVersions = new Map();
 
-  async function ensureSessionStarted(sid, cwdPath) {
+  async function start(sid, cwdPath) {
     if (knownSessions.has(sid)) return;
     knownSessions.add(sid);
-    await postEvent(url, "session-start", sid, cwdPath || directory || "");
+    await postEvent(url, AI_LIGHT_EVENT.SESSION_START, sid, cwdPath || defaultDirectory);
   }
 
   async function postKnownSessionEvent(eventType, sid) {
-    if (sid === "unknown") {
+    if (sid === UNKNOWN_SESSION_ID) {
       log(`ignored: event=${eventType} reason=unknown-session`);
       return;
     }
-    await ensureSessionStarted(sid);
+    await start(sid);
     await postEvent(url, eventType, sid);
   }
 
@@ -111,74 +183,44 @@ export const OpenCodeAiLightPlugin = async ({ directory }) => {
   }
 
   async function scheduleWorking(sid) {
-    if (sid === "unknown") {
-      log("ignored: event=prompt-submit reason=unknown-session");
+    if (sid === UNKNOWN_SESSION_ID) {
+      log(`ignored: event=${AI_LIGHT_EVENT.PROMPT_SUBMIT} reason=unknown-session`);
       return;
     }
     const version = sessionVersions.get(sid) || 0;
-    await ensureSessionStarted(sid);
+    await start(sid);
     if ((sessionVersions.get(sid) || 0) !== version) {
-      log(`ignored: event=prompt-submit session=${sid} reason=stale-busy`);
+      log(`ignored: event=${AI_LIGHT_EVENT.PROMPT_SUBMIT} session=${sid} reason=stale-busy`);
       return;
     }
     clearPendingWorking(sid);
     const timer = setTimeout(async () => {
       pendingWorkingTimers.delete(sid);
       if ((sessionVersions.get(sid) || 0) !== version) {
-        log(`ignored: event=prompt-submit session=${sid} reason=stale-timer`);
+        log(`ignored: event=${AI_LIGHT_EVENT.PROMPT_SUBMIT} session=${sid} reason=stale-timer`);
         return;
       }
-      await postEvent(url, "prompt-submit", sid);
+      await postEvent(url, AI_LIGHT_EVENT.PROMPT_SUBMIT, sid);
     }, WORKING_DELAY_MS);
     pendingWorkingTimers.set(sid, timer);
   }
 
-  async function sendStop(sid) {
+  async function stop(sid) {
     sessionVersions.set(sid, (sessionVersions.get(sid) || 0) + 1);
     clearPendingWorking(sid);
-    await postKnownSessionEvent("stop", sid);
+    await postKnownSessionEvent(AI_LIGHT_EVENT.STOP, sid);
+  }
+
+  function forget(sid) {
+    sessionVersions.set(sid, (sessionVersions.get(sid) || 0) + 1);
+    clearPendingWorking(sid);
+    knownSessions.delete(sid);
   }
 
   return {
-    event: async ({ event }) => {
-      const type = event?.type || "unknown";
-      const sid = getSessionId(event);
-      log(`received: type=${type} session=${sid}`);
-
-      switch (type) {
-        case "session.created":
-          knownSessions.add(sid);
-          await postEvent(url, "session-start", sid, event?.properties?.cwd || directory || "");
-          break;
-        case "session.updated":
-          break;
-        case "session.status": {
-          const statusType = getStatusType(event);
-          log(`status: session=${sid} value=${statusType || "unknown"}`);
-          if (statusType === "busy" || statusType === "retry") {
-            await scheduleWorking(sid);
-          } else if (statusType === "idle") {
-            await sendStop(sid);
-          }
-          break;
-        }
-        case "message.updated":
-          break;
-        case "session.idle":
-          await sendStop(sid);
-          break;
-        case "session.error":
-          await postEvent(url, "notification", sid);
-          break;
-        case "session.deleted":
-          sessionVersions.set(sid, (sessionVersions.get(sid) || 0) + 1);
-          clearPendingWorking(sid);
-          await postEvent(url, "session-end", sid);
-          break;
-        case "permission.asked":
-          await postEvent(url, "permission-request", sid);
-          break;
-      }
-    },
+    forget,
+    scheduleWorking,
+    start,
+    stop,
   };
-};
+}
