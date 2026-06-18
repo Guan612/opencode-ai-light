@@ -30,6 +30,25 @@ function findAiLightUrl() {
   }
 }
 
+function getSessionId(event) {
+  return (
+    event?.sessionID ||
+    event?.sessionId ||
+    event?.session_id ||
+    event?.properties?.sessionID ||
+    event?.properties?.sessionId ||
+    event?.properties?.session_id ||
+    event?.properties?.session?.id ||
+    "unknown"
+  );
+}
+
+function getStatusType(event) {
+  const status = event?.properties?.status;
+  if (typeof status === "string") return status;
+  return status?.type || status?.status || status?.state || event?.properties?.statusType;
+}
+
 async function postEvent(url, eventType, sid, cwdPath) {
   try {
     const body = JSON.stringify({
@@ -61,7 +80,7 @@ export const OpenCodeAiLightPlugin = async ({ directory }) => {
   return {
     event: async ({ event }) => {
       const type = event?.type || "unknown";
-      const sid = event?.sessionID || event?.session_id || "unknown";
+      const sid = getSessionId(event);
       log(`received: type=${type} session=${sid}`);
 
       switch (type) {
@@ -76,7 +95,8 @@ export const OpenCodeAiLightPlugin = async ({ directory }) => {
           break;
         }
         case "session.status": {
-          const statusType = event?.properties?.status?.type;
+          const statusType = getStatusType(event);
+          log(`status: session=${sid} value=${statusType || "unknown"}`);
           if (statusType === "idle") {
             lastStopTime = Date.now();
             await postEvent(url, "stop", sid);
